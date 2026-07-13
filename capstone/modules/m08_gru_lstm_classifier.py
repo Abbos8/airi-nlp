@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pickle
 import time
+from collections import Counter
 from dataclasses import dataclass
 
 import numpy as np
@@ -105,8 +106,15 @@ if HAS_TORCH:
             self.output = nn.Linear(hidden_size, n_classes)
             self.arch = arch
 
-        def forward(self, token_ids):
+        def forward(self, token_ids, lengths=None):
             embedded = self.embedding(token_ids)
+            if lengths is not None:
+                embedded = nn.utils.rnn.pack_padded_sequence(
+                    embedded,
+                    lengths.detach().cpu(),
+                    batch_first=True,
+                    enforce_sorted=False,
+                )
             _, hidden = self.recurrent(embedded)
             last_hidden = hidden[0] if self.arch == "lstm" else hidden
             return self.output(last_hidden[-1])
@@ -126,6 +134,8 @@ class _BaseSequenceClassifier:
     arch = ""
 
     def __init__(self, embed_dim: int = 32) -> None:
+        if not isinstance(embed_dim, int) or embed_dim <= 0:
+            raise ValueError("embed_dim musbat butun son bo'lishi kerak.")
         self._pre = TextPreprocessor()
         self._dim = embed_dim
         self._w2i: dict[str, int] = {}
@@ -134,6 +144,31 @@ class _BaseSequenceClassifier:
         self._model = None
         self._np = None
         self._train_cache = None
+
+    @staticmethod
+    def _validate_training_data(texts, labels, epochs, hidden_size, num_layers, lr):
+        if not isinstance(texts, (list, tuple)) or not texts:
+            raise ValueError("texts bo'sh bo'lmagan ro'yxat bo'lishi kerak.")
+        if not isinstance(labels, (list, tuple)) or len(texts) != len(labels):
+            raise ValueError("texts va labels uzunligi teng bo'lishi kerak.")
+        if any(not isinstance(text, str) or not text.strip() for text in texts):
+            raise ValueError("Har bir text bo'sh bo'lmagan string bo'lishi kerak.")
+        if any(not isinstance(label, str) or not label.strip() for label in labels):
+            raise ValueError("Har bir label bo'sh bo'lmagan string bo'lishi kerak.")
+        if len(set(labels)) < 2:
+            raise ValueError("Tasniflash uchun kamida ikkita sinf kerak.")
+        if not isinstance(epochs, int) or epochs <= 0:
+            raise ValueError("epochs musbat butun son bo'lishi kerak.")
+        if not isinstance(hidden_size, int) or hidden_size <= 0:
+            raise ValueError("hidden_size musbat butun son bo'lishi kerak.")
+        if not isinstance(num_layers, int) or num_layers <= 0:
+            raise ValueError("num_layers musbat butun son bo'lishi kerak.")
+        if not isinstance(lr, (int, float)) or lr <= 0:
+            raise ValueError("lr musbat son bo'lishi kerak.")
+
+    def _require_fitted(self):
+        if not self._labels or (self._model is None and self._np is None):
+            raise RuntimeError("Avval fit() yoki load() ni chaqiring.")
 
     def _tokenize(self, text: str) -> list[str]:
         return self._pre.preprocess(text) if text.strip() else []
@@ -169,6 +204,7 @@ class _BaseSequenceClassifier:
         num_layers: int = 2,
         lr: float = 1e-3,
     ) -> None:
+        self._validate_training_data(texts, labels, epochs, hidden_size, num_layers, lr)
         self._config = _TrainingConfig(epochs, hidden_size, num_layers, lr)
         sequences, y = self._prepare(texts, labels)
         self._train_cache = (list(texts), list(labels))
@@ -181,6 +217,7 @@ class _BaseSequenceClassifier:
     def _fit_torch(self, sequences, y):
         torch.manual_seed(42)
         X = torch.tensor(self._pad(sequences), dtype=torch.long)
+        lengths = torch.tensor([len(sequence) for sequence in sequences], dtype=torch.long)
         y_tensor = torch.tensor(y, dtype=torch.long)
         self._model = _TorchSequenceNet(
             len(self._w2i) + 1,
@@ -195,7 +232,7 @@ class _BaseSequenceClassifier:
         self._model.train()
         for _ in range(self._config.epochs):
             optimizer.zero_grad()
-            loss = loss_fn(self._model(X), y_tensor)
+            loss = loss_fn(self._model(X, lengths), y_tensor)
             loss.backward()
             optimizer.step()
         self._model.eval()
@@ -247,10 +284,15 @@ class _BaseSequenceClassifier:
         self._model = None
 
     def _proba(self, text: str) -> np.ndarray:
+        self._require_fitted()
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("text bo'sh bo'lmagan string bo'lishi kerak.")
         token_ids = self._encode(text)
         if HAS_TORCH and self._model is not None:
-            with torch.no_grad():
-                logits = self._model(torch.tensor([token_ids], dtype=torch.long))[0].numpy()
+            inputs = torch.tensor([token_ids], dtype=torch.long)
+            lengths = torch.tensor([len(token_ids)], dtype=torch.long)
+            with torch.inference_mode():
+                logits = self._model(inputs, lengths)[0].detach().cpu().numpy()
             probs = np.exp(logits - logits.max())
             return probs / probs.sum()
 
@@ -265,17 +307,28 @@ class _BaseSequenceClassifier:
         return {label: float(probs[index]) for index, label in enumerate(self._labels)}
 
     def evaluate(self, texts: list[str], labels: list[str]) -> dict[str, float]:
+        if not texts or len(texts) != len(labels):
+            raise ValueError("Baholash texts va labels uzunligi teng va bo'sh emas bo'lishi kerak.")
+        unknown_labels = set(labels) - set(self._labels)
+        if unknown_labels:
+            raise ValueError(f"Noma'lum label(lar): {sorted(unknown_labels)}")
         start = time.perf_counter()
-        predictions = [self.predict(text) for text in texts]
+        probabilities = [self.predict_proba(text) for text in texts]
         inference_ms = (time.perf_counter() - start) * 1000 / max(len(texts), 1)
+        predictions = [max(row, key=row.get) for row in probabilities]
         accuracy = float(np.mean(np.array(predictions) == np.array(labels)))
+        validation_loss = -float(
+            np.mean([np.log(max(row[label], 1e-12)) for row, label in zip(probabilities, labels)])
+        )
         return {
             "f1": round(_macro_f1(labels, predictions), 4),
             "accuracy": round(accuracy, 4),
+            "val_loss": round(validation_loss, 4),
             "inference_time": round(inference_ms, 4),
         }
 
     def save(self, path: str) -> None:
+        self._require_fitted()
         state = {
             "w2i": self._w2i,
             "labels": self._labels,
@@ -294,11 +347,17 @@ class _BaseSequenceClassifier:
     def load(self, path: str) -> None:
         with open(path, "rb") as file:
             state = pickle.load(file)
+        if state.get("arch") != self.arch:
+            raise ValueError(
+                f"Artefakt arxitekturasi {state.get('arch')!r}; bu klass {self.arch!r}."
+            )
         self._w2i = state["w2i"]
         self._labels = state["labels"]
         self._dim = state["dim"]
         self._config = state["config"]
 
+        if "torch" in state and not HAS_TORCH:
+            raise RuntimeError("Bu artefaktni yuklash uchun PyTorch o'rnatilishi kerak.")
         if HAS_TORCH and "torch" in state:
             self._model = _TorchSequenceNet(
                 len(self._w2i) + 1,
@@ -311,9 +370,11 @@ class _BaseSequenceClassifier:
             self._model.load_state_dict(state["torch"])
             self._model.eval()
             self._np = None
-        else:
-            self._np = state.get("np")
+        elif state.get("np") is not None:
+            self._np = state["np"]
             self._model = None
+        else:
+            raise ValueError("Artefaktda yuklanadigan model holati topilmadi.")
 
 
 class GRUClassifier(_BaseSequenceClassifier):
@@ -380,23 +441,56 @@ class GRULSTMClassifier:
         return self._active.predict_proba(text)
 
     def compare_report(self) -> dict:
-        assert self._train_args is not None, "Avval fit() chaqiring."
+        if self._train_args is None:
+            raise RuntimeError("Avval fit() chaqiring.")
         texts, labels, epochs, hidden_size, num_layers, lr = self._train_args
+        train_texts, train_labels, validation_texts, validation_labels = (
+            self._validation_split(texts, labels)
+        )
         report = {}
         for arch, model_cls in (("lstm", LSTMClassifier), ("gru", GRUClassifier)):
             model = model_cls(embed_dim=self._dim)
             model.fit(
-                texts,
-                labels,
+                train_texts,
+                train_labels,
                 epochs=epochs,
                 hidden_size=hidden_size,
                 num_layers=num_layers,
                 lr=lr,
             )
-            report[arch] = model.evaluate(texts, labels)
+            report[arch] = model.evaluate(validation_texts, validation_labels)
         return report
 
+    @staticmethod
+    def _validation_split(texts, labels, validation_ratio=0.2):
+        counts = Counter(labels)
+        if any(count < 2 for count in counts.values()):
+            raise ValueError("compare_report() uchun har sinfda kamida 2 ta namuna kerak.")
+        rng = np.random.RandomState(42)
+        train_indices = []
+        validation_indices = []
+        for label in sorted(counts):
+            indices = np.array([i for i, value in enumerate(labels) if value == label])
+            rng.shuffle(indices)
+            validation_count = min(
+                len(indices) - 1,
+                max(1, int(round(len(indices) * validation_ratio))),
+            )
+            validation_indices.extend(indices[:validation_count])
+            train_indices.extend(indices[validation_count:])
+        rng.shuffle(train_indices)
+        rng.shuffle(validation_indices)
+        select = lambda values, indices: [values[index] for index in indices]
+        return (
+            select(texts, train_indices),
+            select(labels, train_indices),
+            select(texts, validation_indices),
+            select(labels, validation_indices),
+        )
+
     def save(self, path: str) -> None:
+        if self._train_args is None:
+            raise RuntimeError("Avval fit() chaqiring.")
         state = {
             "dim": self._dim,
             "arch": self._arch,

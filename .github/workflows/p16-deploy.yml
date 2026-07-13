@@ -1,0 +1,53 @@
+name: P16 - Deploy or rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: Serving backend
+        type: choice
+        options: [lstm, distilbert]
+        required: true
+      model_name:
+        description: Display name
+        required: true
+      model_version:
+        description: Human-readable version
+        required: true
+      model_repo:
+        description: Hugging Face model repository
+        required: true
+      model_revision:
+        description: Exact model commit SHA
+        required: true
+      dataset_revision:
+        description: Exact dataset commit SHA
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+      HF_DATASET_REPO: ${{ vars.HF_DATASET_REPO }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Pin requested revisions
+        run: >-
+          python deployment/p16/scripts/write_deployment_manifest.py
+          --backend "${{ inputs.backend }}"
+          --model-name "${{ inputs.model_name }}"
+          --model-version "${{ inputs.model_version }}"
+          --model-repo "${{ inputs.model_repo }}"
+          --model-revision "${{ inputs.model_revision }}"
+          --dataset-repo "$HF_DATASET_REPO"
+          --dataset-revision "${{ inputs.dataset_revision }}"
+          --code-revision "$GITHUB_SHA"
+      - uses: huggingface/hub-sync@v0.1.0
+        with:
+          github_repo_id: ${{ github.repository }}
+          huggingface_repo_id: ${{ env.HF_SPACE_ID }}
+          hf_token: ${{ env.HF_TOKEN }}
+          space_sdk: docker
+          subdirectory: deployment/p16

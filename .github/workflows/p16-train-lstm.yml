@@ -1,0 +1,78 @@
+name: P16 - Train LSTM and deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      epochs:
+        description: LSTM training epochs
+        required: true
+        default: "8"
+      model_version:
+        description: Human-readable model version
+        required: true
+        default: "v1"
+
+jobs:
+  continuous-training:
+    runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_MODEL_REPO: ${{ vars.HF_MODEL_REPO }}
+      HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+      HF_DATASET_REPO: ${{ vars.HF_DATASET_REPO }}
+      HF_DATASET_REVISION: ${{ vars.HF_DATASET_REVISION }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: deployment/p16/requirements-training.txt
+      - name: Install training dependencies
+        run: python -m pip install -r deployment/p16/requirements-training.txt
+      - name: Train candidate from the capstone LSTM
+        run: >-
+          python deployment/p16/training/train_lstm.py
+          --epochs "${{ inputs.epochs }}"
+          --model-version "${{ inputs.model_version }}"
+          --dataset-repo "$HF_DATASET_REPO"
+          --dataset-revision "$HF_DATASET_REVISION"
+          --output /tmp/lstm-candidate
+      - name: Apply quality gate
+        run: >-
+          python deployment/p16/scripts/check_quality.py
+          /tmp/lstm-candidate/metrics.json
+          --min-f1 0.70 --max-latency-ms 100
+      - uses: actions/upload-artifact@v4
+        with:
+          name: p16-lstm-candidate
+          path: /tmp/lstm-candidate
+      - name: Publish approved model
+        if: ${{ env.HF_TOKEN != '' && env.HF_MODEL_REPO != '' }}
+        run: |
+          revision=$(python deployment/p16/training/publish.py \
+            --folder /tmp/lstm-candidate \
+            --repo "$HF_MODEL_REPO" \
+            --token "$HF_TOKEN")
+          echo "MODEL_REVISION=$revision" >> "$GITHUB_ENV"
+      - name: Pin approved model in deployment manifest
+        if: ${{ env.MODEL_REVISION != '' && env.HF_DATASET_REPO != '' && env.HF_DATASET_REVISION != '' }}
+        run: >-
+          python deployment/p16/scripts/write_deployment_manifest.py
+          --backend lstm
+          --model-name uzbek-sentiment-lstm
+          --model-version "${{ inputs.model_version }}"
+          --model-repo "$HF_MODEL_REPO"
+          --model-revision "$MODEL_REVISION"
+          --dataset-repo "$HF_DATASET_REPO"
+          --dataset-revision "$HF_DATASET_REVISION"
+          --code-revision "$GITHUB_SHA"
+      - name: Deploy Docker Space
+        if: ${{ env.MODEL_REVISION != '' && env.HF_SPACE_ID != '' && env.HF_DATASET_REVISION != '' }}
+        uses: huggingface/hub-sync@v0.1.0
+        with:
+          github_repo_id: ${{ github.repository }}
+          huggingface_repo_id: ${{ env.HF_SPACE_ID }}
+          hf_token: ${{ env.HF_TOKEN }}
+          space_sdk: docker
+          subdirectory: deployment/p16

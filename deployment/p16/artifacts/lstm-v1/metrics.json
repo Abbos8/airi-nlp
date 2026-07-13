@@ -1,0 +1,11 @@
+{
+  "f1": 0.7818,
+  "accuracy": 0.7833,
+  "val_loss": 0.5399,
+  "inference_time": 0.1649,
+  "training_seconds": 0.688,
+  "parameter_count": 31458,
+  "train_examples": 240,
+  "test_examples": 60,
+  "artifact_size_mb": 0.133
+}

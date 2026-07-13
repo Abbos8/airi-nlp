@@ -1,0 +1,8 @@
+__pycache__
+.pytest_cache
+tests
+training
+scripts
+requirements-dev.txt
+requirements-notebook.txt
+requirements-training.txt

@@ -1,0 +1,13 @@
+{
+  "backend": "lstm",
+  "model_name": "uzbek-sentiment-lstm",
+  "model_version": "bundled-v1",
+  "model_repo": null,
+  "model_revision": null,
+  "artifact_path": "artifacts/lstm-v1",
+  "dataset_repo": "course-local:practices/d14_checkpoints/uz_sentiment_mini.jsonl",
+  "dataset_revision": "fb9e94044a590b37f8a5caa7e73cdf87685b668b8685bf64eceb01517f6aa1e5",
+  "code_revision": "working-tree-uncommitted",
+  "low_confidence_threshold": 0.6,
+  "alert_rate_threshold": 0.4
+}
