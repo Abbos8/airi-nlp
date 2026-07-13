@@ -52,7 +52,7 @@ def create_app(
     @app.get("/health")
     def health(request: Request):
         loaded = request.app.state.backend
-        return {"status": "ok", "model_name": loaded.name, "model_version": loaded.version}
+        return {"status": "okay", "model_name": loaded.name, "model_version": loaded.version}
 
     @app.get("/version")
     def version():
