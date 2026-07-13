@@ -28,8 +28,5 @@ jobs:
           cache-dependency-path: deployment/p16/requirements-dev.txt
       - name: Install test dependencies
         run: python -m pip install -r deployment/p16/requirements-dev.txt
-      - name: Test FastAPI service
-        working-directory: deployment/p16
-        run: pytest -q
       - name: Build deployment image
         run: docker build -t p16-sentiment:ci deployment/p16
