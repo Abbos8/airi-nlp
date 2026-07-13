@@ -32,20 +32,6 @@ def current_code_revision() -> str:
         return "unknown"
 
 
-def resolve_dataset(data_path, dataset_repo=None, dataset_revision=None):
-    if not dataset_repo:
-        return Path(data_path), f"course-local:{Path(data_path).name}"
-    from huggingface_hub import hf_hub_download
-
-    path = hf_hub_download(
-        repo_id=dataset_repo,
-        repo_type="dataset",
-        filename="uz_sentiment_mini.jsonl",
-        revision=dataset_revision,
-    )
-    return Path(path), dataset_repo
-
-
 def export_capstone_lstm(model, output_dir: Path, metadata: dict) -> dict:
     """Convert the Day 9 capstone object into an explicit serving artifact."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -71,14 +57,13 @@ def train_lstm(
     epochs: int = 8,
     hidden_size: int = 64,
     model_version: str = "v1",
-    dataset_repo: str | None = None,
-    dataset_revision: str | None = None,
 ) -> dict:
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
     from capstone.modules.m08_gru_lstm_classifier import LSTMClassifier
 
-    data_path, dataset_source = resolve_dataset(data_path, dataset_repo, dataset_revision)
+    data_path = Path(data_path)
+    dataset_source = f"course-local:{data_path.name}"
     texts, numeric_labels = load_jsonl(data_path)
     train_x, train_y, test_x, test_y = stratified_split(texts, numeric_labels)
     train_labels = [LABEL_NAMES[label] for label in train_y]
@@ -110,7 +95,7 @@ def train_lstm(
         "model_name": "uzbek-sentiment-lstm",
         "model_version": model_version,
         "dataset_repo": dataset_source,
-        "dataset_revision": dataset_revision or sha256_file(data_path),
+        "dataset_revision": sha256_file(data_path),
         "code_revision": current_code_revision(),
     }
     export_capstone_lstm(model, output_dir, metadata)
@@ -128,8 +113,6 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--hidden-size", type=int, default=64)
     parser.add_argument("--model-version", default="v1")
-    parser.add_argument("--dataset-repo")
-    parser.add_argument("--dataset-revision")
     args = parser.parse_args()
     result = train_lstm(
         args.data,
@@ -137,8 +120,6 @@ def main() -> None:
         args.epochs,
         args.hidden_size,
         args.model_version,
-        args.dataset_repo,
-        args.dataset_revision,
     )
     print(json.dumps(result, indent=2))
 

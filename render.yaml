@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: airi-nlp-p16
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./deployment/p16/Dockerfile
+    dockerContext: ./deployment/p16
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths:
+        - deployment/p16/**
+        - render.yaml
