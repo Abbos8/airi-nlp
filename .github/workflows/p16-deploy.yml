@@ -20,6 +20,10 @@ on:
       model_revision:
         description: Exact model commit SHA
         required: true
+      model_label_map:
+        description: JSON map from model labels to API labels; null drops a class
+        required: false
+        default: '{}'
       dataset_revision:
         description: Exact dataset commit SHA
         required: true
@@ -41,6 +45,7 @@ jobs:
           --model-version "${{ inputs.model_version }}"
           --model-repo "${{ inputs.model_repo }}"
           --model-revision "${{ inputs.model_revision }}"
+          --model-label-map '${{ inputs.model_label_map }}'
           --dataset-repo "$HF_DATASET_REPO"
           --dataset-revision "${{ inputs.dataset_revision }}"
           --code-revision "$GITHUB_SHA"

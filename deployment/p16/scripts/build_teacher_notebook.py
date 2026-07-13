@@ -111,16 +111,28 @@ if missing:
 print("Muhit tayyor. Yetishmagan paketlar:", missing or "yo'q")"""),
     markdown("""### Dars konfiguratsiyasi
 
-LSTM live o'qitiladi. DistilBERT esa Day 14/P13 da fine-tune qilingan Hugging Face model repo va aniq revision berilgandagina yuklanadi. Base multilingual DistilBERT taxminan **134M parametr**; u 66M parametrli English DistilBERT emas."""),
+LSTM live o'qitiladi. Transformer uchun to'rtta qiymatni ajratamiz:
+
+- `DISTILBERT_BASE_MODEL`: fine-tuning boshlanadigan pretrained checkpoint;
+- `DISTILBERT_MODEL_REPO`: tayyor fine-tuned Hugging Face repo;
+- `DISTILBERT_REVISION`: repo ichidagi o'zgarmas commit;
+- `DISTILBERT_SERVICE_NAME`: API javobida ko'rinadigan qisqa nom.
+
+Tashqi model uchta anonim label beradi. Ushbu binary API uchun `LABEL_0 -> salbiy`, `LABEL_1 -> ijobiy`; neytral `LABEL_2` olib tashlanib, qolgan ehtimollar qayta normallashtiriladi. Bu mapping model kartasida hujjatlashtirilmagan, shuning uchun darsda alohida tekshiriladi."""),
     code("""RUN_LSTM_TRAINING = True
 LSTM_EPOCHS = 8
 
-DISTILBERT_MODEL_REPO = ""       # masalan: username/uzbek-sentiment-distilbert
-DISTILBERT_REVISION = ""         # Hub commit SHA
-RUN_DISTILBERT_EVALUATION = False
+DISTILBERT_BASE_MODEL = "distilbert-base-multilingual-cased"
+DISTILBERT_SERVICE_NAME = "external-uzbek-distilbert"
+DISTILBERT_MODEL_REPO = "blackhole33/uzbek-sentiment-analysis-v5"
+DISTILBERT_REVISION = "89b0997b3e12792942358d95d51023f3fe1ef228"
+DISTILBERT_LABEL_MAP = {"LABEL_0": "salbiy", "LABEL_1": "ijobiy", "LABEL_2": None}
+RUN_DISTILBERT_EVALUATION = True
 
 SPACE_URL = ""                   # masalan: https://username-space.hf.space
-print("Asosiy live backend: LSTM")"""),
+print("Asosiy live backend: LSTM")
+print("Tayyor Transformer:", DISTILBERT_MODEL_REPO)
+print("Pinned revision:", DISTILBERT_REVISION[:12])"""),
     markdown("""## 2. Datasetni versiyalash
 
 `dataset nomi` yetarli emas: repository ichidagi ma'lumot o'zgarishi mumkin. Lokal snapshot uchun SHA-256, Hugging Face Dataset Hub uchun esa commit revision ishlatamiz. Shunda aynan qaysi misollar modelni hosil qilganini qayta topish mumkin."""),
@@ -243,9 +255,9 @@ def evaluate_backend(backend, samples, labels):
     metrics = classification_metrics(labels, predictions)
     metrics["inference_time"] = round(elapsed_ms, 3)
     return metrics"""),
-    markdown("""### DistilBERTni ixtiyoriy yuklash
+    markdown("""### Tayyor Uzbek DistilBERTni yuklash
 
-Bo'sh repo bilan hujayra modelni yuklashga urinmaydi. Bu notebookning asosiy LSTM yo'li internet yoki 540 MB atrofidagi transformer artefaktiga bog'lanib qolmasligini ta'minlaydi."""),
+Bu model qayta o'qitilmaydi: pinned Hugging Face revision to'g'ridan-to'g'ri yuklanadi. Tashqi modelning label kontrakti bizning binary API kontraktimizdan farq qilgani uchun mapping ochiq konfiguratsiya sifatida beriladi. Natijalar albatta bizning Day 14 test bo'lagimizda qayta o'lchanadi."""),
     code("""from p16_service.backends import DistilBERTBackend
 from p16_service.config import Settings
 
@@ -253,13 +265,20 @@ distilbert_metrics = None
 if RUN_DISTILBERT_EVALUATION and DISTILBERT_MODEL_REPO and DISTILBERT_REVISION:
     bert_settings = Settings(
         backend="distilbert",
-        model_name="uzbek-sentiment-distilbert",
+        model_name=DISTILBERT_SERVICE_NAME,
         model_version="candidate-v2",
         model_repo=DISTILBERT_MODEL_REPO,
         model_revision=DISTILBERT_REVISION,
+        model_label_map=DISTILBERT_LABEL_MAP,
         dataset_revision=dataset_revision,
     )
     distilbert_backend = DistilBERTBackend(bert_settings)
+    print("Raw labels:", distilbert_backend.raw_labels)
+    for expected, text in [("ijobiy", "Bu juda ajoyib!"), ("salbiy", "Bu juda yomon!")]:
+        probabilities = distilbert_backend.predict_proba(text)
+        predicted = max(probabilities, key=probabilities.get)
+        print(text, "->", predicted, probabilities)
+        assert predicted == expected
     distilbert_metrics = evaluate_backend(distilbert_backend, test_x, test_y)
     print(distilbert_metrics)
 else:
@@ -423,10 +442,11 @@ Asosiy 80 daqiqalik yo'lda bu buyruq bajarilmaydi. Day 14 datasetida fine-tuning
 python deployment/p16/training/train_distilbert.py \
   --data practices/d14_checkpoints/uz_sentiment_mini.jsonl \
   --output /content/uzbek-sentiment-distilbert \
+  --model-name distilbert-base-multilingual-cased \
   --epochs 2 --batch-size 16
 ```
 
-So'ng artefakt Hugging Face Model Hub'ga yuboriladi va qaytgan commit SHA `DISTILBERT_REVISION` sifatida ishlatiladi. Tokenni Colab Secrets yoki GitHub Secrets'da saqlang; kod hujayrasiga yozmang."""),
+Bu yerdagi `--model-name` pretrained base checkpointni aniq belgilaydi. So'ng artefakt Hugging Face Model Hub'ga yuboriladi va qaytgan commit SHA `DISTILBERT_REVISION` sifatida ishlatiladi. Tokenni Colab Secrets yoki GitHub Secrets'da saqlang; kod hujayrasiga yozmang."""),
 ]
 
 

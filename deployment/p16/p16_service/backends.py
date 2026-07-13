@@ -15,6 +15,25 @@ class PredictionBackend(Protocol):
     def predict_proba(self, text: str) -> dict[str, float]: ...
 
 
+def _project_probabilities(
+    raw_labels: list[str],
+    probabilities: list[float],
+    label_map: dict[str, str | None],
+) -> dict[str, float]:
+    """Map external labels to the service contract and renormalize kept classes."""
+    projected: dict[str, float] = {}
+    for raw_label, probability in zip(raw_labels, probabilities):
+        target_label = label_map.get(raw_label, raw_label)
+        if target_label is None:
+            continue
+        projected[target_label] = projected.get(target_label, 0.0) + float(probability)
+
+    total = sum(projected.values())
+    if not projected or total <= 0:
+        raise ValueError("Model label mapping barcha chiqish sinflarini olib tashladi.")
+    return {label: probability / total for label, probability in projected.items()}
+
+
 class _LSTMNetwork:
     """Build the same PyTorch graph used by the Day 9 capstone class."""
 
@@ -82,8 +101,13 @@ class DistilBERTBackend:
             settings.model_repo, revision=revision
         )
         self.model.eval()
-        raw_labels = self.model.config.id2label or {0: "salbiy", 1: "ijobiy"}
-        self.labels = [raw_labels.get(i, raw_labels.get(str(i), str(i))) for i in range(2)]
+        configured_labels = self.model.config.id2label or {}
+        num_labels = int(self.model.config.num_labels)
+        self.raw_labels = [
+            configured_labels.get(i, configured_labels.get(str(i), str(i)))
+            for i in range(num_labels)
+        ]
+        self.label_map = settings.model_label_map or {}
         self.name = settings.model_name
         self.version = settings.model_version
 
@@ -94,7 +118,7 @@ class DistilBERTBackend:
         with torch.inference_mode():
             logits = self.model(**inputs).logits[0]
             probabilities = torch.softmax(logits, dim=-1).tolist()
-        return dict(zip(self.labels, map(float, probabilities)))
+        return _project_probabilities(self.raw_labels, probabilities, self.label_map)
 
 
 def build_backend(settings: Settings) -> PredictionBackend:

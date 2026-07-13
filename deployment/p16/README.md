@@ -10,10 +10,26 @@ Bu papka P16 o'qituvchi demosining haqiqiy deployment loyihasi. Bitta FastAPI
 xizmati ikki almashtiriladigan backendni qo'llaydi:
 
 - kichik PyTorch LSTM;
-- fine-tune qilingan `distilbert-base-multilingual-cased`.
+- Hugging Face'dan yuklanadigan fine-tune qilingan DistilBERT.
 
 Xizmat ishga tushganda faqat `deployment.json` da tanlangan modelni yuklaydi.
 Model har bir so'rovda qayta yuklanmaydi.
+
+## Notebookdagi tayyor Transformer nomzodi
+
+P16 notebook quyidagi tashqi Uzbek sentiment modelini bir xil Day 14 test
+bo'lagida LSTM bilan taqqoslaydi:
+
+- repo: `blackhole33/uzbek-sentiment-analysis-v5`;
+- revision: `89b0997b3e12792942358d95d51023f3fe1ef228`;
+- binary projection: `LABEL_0 -> salbiy`, `LABEL_1 -> ijobiy`,
+  `LABEL_2 -> null`.
+
+`null` neytral klassni binary API natijasidan chiqaradi; qolgan ehtimollar
+qayta normallashtiriladi. Tashqi modelning anonim label mappingi model kartasida
+hujjatlashtirilmagan, shuning uchun uni o'z test ma'lumotimizda tekshirish
+deployment qarorining bir qismidir. Notebookdagi nomzod bundled LSTM yozilgan
+`deployment.json` faylini avtomatik almashtirmaydi.
 
 ## Lokal tekshiruv
 
@@ -48,7 +64,12 @@ Repository variables:
 `P16 - Train LSTM and deploy` workflow LSTMni o'qitadi, quality gate'dan
 o'tkazadi, modelni Hub'ga yuboradi va Space'ni yangilaydi. `P16 - Deploy or
 rollback` esa mavjud model revisionini deploy qilish yoki avvalgi revisionga
-qaytish uchun ishlatiladi.
+qaytish uchun ishlatiladi. Tashqi uch klassli modelni binary API sifatida
+deploy qilganda `model_label_map` inputiga quyidagini kiriting:
+
+```json
+{"LABEL_0":"salbiy","LABEL_1":"ijobiy","LABEL_2":null}
+```
 
 Datasetni birinchi marta Hub'ga chiqarish:
 
